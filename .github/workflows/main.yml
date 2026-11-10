@@ -1,0 +1,56 @@
+name: Build KeyWords APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      # Keeps the SAME signing key between builds so updates install over the old app.
+      - name: Restore signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: keywords-signing-key-v1
+
+      - name: Ensure signing key exists
+        run: |
+          mkdir -p ~/.android
+          if [ ! -f ~/.android/debug.keystore ]; then
+            keytool -genkeypair -keystore ~/.android/debug.keystore \
+              -storepass android -keypass android -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 -validity 36500 \
+              -dname "CN=KeyWords,O=Personal,C=MX"
+          fi
+
+      - name: Build release APK
+        run: gradle --no-daemon assembleRelease
+
+      - name: Verify the APK has NO internet permission
+        run: |
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
+          AAPT2=$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort | tail -n 1)
+          "$AAPT2" dump permissions "$APK" | tee perms.txt
+          if grep -q "android.permission.INTERNET" perms.txt; then
+            echo "FAIL: INTERNET permission found"; exit 1
+          fi
+          echo "OK: no INTERNET permission"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KeyWords-apk
+          path: app/build/outputs/apk/release/*.apk
